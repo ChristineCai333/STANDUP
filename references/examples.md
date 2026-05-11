@@ -261,6 +261,121 @@ Set to blanks when ARMCD is not missing and ARMCD = ACTARMCD.
 
 ---
 
+## Example 7: DSAF_LBXL — LBSTRESC (Character Result in Standard Format)
+
+### SAS Code Pattern:
+```sas
+data lb_LAB_mac1output;
+  set lb_LAB_mac1output;
+  if lbtestcd>'' then do;
+    if (anyalpha(lborres)>0 or indexc(lborres,'>','<','-','_','+')>0 or (lbtestcd='HCG' and LBGLSUCD='0')) and lbstresc='' then do;
+      lbstresc=upcase(lborres);
+    end;
+    if lbnrind='' and LBALRTFL>'' then lbnrind=LBALRTFL;
+  end;
+  if lbtestcd='DTIL8' then do;
+    lbstresc=lborres;
+    if anyalpha(lborres)>0 then lbstresc=upcase(lborres);
+  end;
+run;
+```
+
+### Generated Algorithm:
+```
+If LBORRES contains alphabetic characters or special characters (>, <, -, _, +),
+or if LBTESTCD='HCG' and LBGLSUCD='0', and LBSTRESC is missing,
+then set LBSTRESC = upcase(LBORRES).
+
+EXCEPT: for LBTESTCD='DTIL8':
+set LBSTRESC = LBORRES;
+if LBORRES contains alphabetic characters: set LBSTRESC = upcase(LBORRES).
+```
+
+### Pattern Notes:
+- Character detection functions (`anyalpha`, `indexc`) described in plain English
+- Special test code (DTIL8) exception described separately
+- Override logic: DTIL8 handling takes priority over general logic
+
+---
+
+## Example 8: DSAF_LBXL — LBORNRLO (Original Reference Range Low)
+
+### SAS Code Pattern:
+```sas
+data lb_LAB_mac2output;
+  set lb_LAB_mac2output;
+  if strip(lbornrlo)='.' then lbornrlo='';
+run;
+
+data LB_LB9001_mac2output;
+  set LB_LB9001_mac2output;
+  if strip(lbornrlo)='.' then lbornrlo='';
+run;
+```
+
+### Generated Algorithm:
+```
+If the value is '.' (character dot), set to blank. Applied to both LAB and LB9001 PRIDs.
+```
+
+### Pattern Notes:
+- Same logic applied to multiple PRIDs — note this in the description
+- Character dot is an artifact from numeric conversion, not a real value
+- Simple conditional → concise description
+
+---
+
+## Example 9: DSAF_LBXL — XLSTRESC (XL Character Result)
+
+### SAS Code Pattern:
+```sas
+data xl_lbxl;
+  set xl_lbxl xl_from_local;
+  if xlstresc='' and xlorres^='' then xlstresc=strip(upcase(xlorres));
+  if anyalpha(xlstresc)=0 and xlstresn=. then xlstresn=input(xlstresc, best.);
+  if xltestcd='DTIL8' then do;
+    xlstresc=xlorres;
+    if anyalpha(xlorres)>0 then xlstresc=upcase(xlorres);
+  end;
+run;
+```
+
+### Generated Algorithm:
+```
+If XLSTRESC is missing and XLORRES is not missing, set XLSTRESC = upcase(XLORRES).
+EXCEPT: for XLTESTCD='DTIL8':
+set XLSTRESC = XLORRES;
+if XLORRES contains alphabetic characters, set XLSTRESC = upcase(XLORRES).
+```
+
+### Pattern Notes:
+- XL variables mirror LB logic but with XL prefix
+- Same DTIL8 exception pattern as LB domain
+- Result cascade: XLSTRESC feeds into XLSTRESN derivation
+
+---
+
+## Example 10: DSAF_LBXL — XLALRTFL_ORIGIN (XL Origin Inheritance)
+
+### SAS Code Pattern:
+```sas
+if XLALRTFL_ORIGIN='' then XLALRTFL_ORIGIN = LBALRTFL_ORIGIN;
+if XLGLSLCD_ORIGIN='' then XLGLSLCD_ORIGIN = LBGLSLCD_ORIGIN;
+if XLGLSTCD_ORIGIN='' then XLGLSTCD_ORIGIN = LBGLSTCD_ORIGIN;
+```
+
+### Generated Algorithm:
+```
+If missing, set to LBALRTFL_ORIGIN.
+```
+
+### Pattern Notes:
+- Origin variables follow a consistent pattern: if XL version is missing, inherit from LB
+- Each origin variable gets the same one-line description format
+- The `%lb_xl` macro may not populate these, so they need fallback from LB source
+
+---
+
 ## Style Guidelines Summary
 
 1. **Start with source**: Name the source dataset(s) at the beginning

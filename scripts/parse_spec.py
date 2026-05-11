@@ -28,7 +28,7 @@ OPTIONAL_COLUMNS = [
 ]
 
 FILTER_STATUS = {"CHGREQ", "CHGOPT"}
-FILTER_TYPE = {"CUSTOM", "ZD_DM"}
+FILTER_TYPE = {"CUSTOM", "ZD_DM", "LBSTRESC_CLRM", "VISITNUM_CLRM", "DIRECT_CONDITIONAL", "DIRECT"}
 
 
 def fuzzy_match_column(header, target):
@@ -124,7 +124,7 @@ def extract(spec_path, sas_name):
     wb.close()
 
 
-def write_output(spec_path, sas_name, output_path, algorithms_json):
+def write_output(spec_path, sas_name, output_path, algorithms_json, spec_driven=False):
     """Write output xlsx with algorithm descriptions populated."""
     wb = openpyxl.load_workbook(spec_path, read_only=True, data_only=True)
 
@@ -142,6 +142,25 @@ def write_output(spec_path, sas_name, output_path, algorithms_json):
     with open(algorithms_json, "r") as f:
         algorithms = json.load(f)
 
+    # Build lookup for spec-driven mode: key = (DATASET, TAGGED_FORM, VARIABLE)
+    algo_lookup = {}
+    if spec_driven and "variables" in algorithms:
+        for entry in algorithms["variables"]:
+            key = (
+                str(entry.get("DATASET", "")).strip().upper(),
+                str(entry.get("TAGGED_FORM", "")).strip().upper(),
+                str(entry.get("VARIABLE", "")).strip().upper(),
+            )
+            algo_lookup[key] = entry.get("ENGLISH_ALGORITHM_DESCRIPTION", "")
+    elif not spec_driven:
+        # Legacy mode: simple variable name -> description dict
+        if isinstance(algorithms, dict) and "variables" not in algorithms:
+            algo_lookup = algorithms
+        elif "variables" in algorithms:
+            for entry in algorithms["variables"]:
+                var = str(entry.get("VARIABLE", "")).strip()
+                algo_lookup[var] = entry.get("ENGLISH_ALGORITHM_DESCRIPTION", "")
+
     # Create output workbook
     out_wb = openpyxl.Workbook()
     out_ws = out_wb.active
@@ -151,25 +170,49 @@ def write_output(spec_path, sas_name, output_path, algorithms_json):
     header_list = list(header)
     out_ws.append([str(h) if h else "" for h in header_list])
 
-    # Write filtered rows with algorithms populated
+    # Write rows with algorithms populated
     algo_col = col_map.get("ENGLISH_ALGORITHM_DESCRIPTION")
     var_col = col_map.get("VARIABLE")
+    ds_col = col_map.get("DATASET")
+    tf_col = col_map.get("TAGGED_FORM")
+
+    populated_count = 0
+    rows_written = 0
 
     for row_idx, row in enumerate(rows[1:], start=2):
-        status = str(row[col_map["ALGORITHM_STATUS"]] or "").strip().upper()
-        trans_type = str(row[col_map["TRANSFORMATION_TYPE"]] or "").strip().upper()
+        if spec_driven:
+            # Spec-driven mode: include row if it has a matching algorithm
+            dataset = str(row[ds_col] or "").strip().upper() if ds_col is not None else ""
+            tagged_form = str(row[tf_col] or "").strip().upper() if tf_col is not None else ""
+            variable = str(row[var_col] or "").strip().upper() if var_col is not None else ""
+            key = (dataset, tagged_form, variable)
 
-        if status in FILTER_STATUS and trans_type in FILTER_TYPE:
-            row_list = list(row)
-            # Pad row if needed
-            while len(row_list) < len(header_list):
-                row_list.append(None)
+            if key in algo_lookup:
+                row_list = list(row)
+                while len(row_list) < len(header_list):
+                    row_list.append(None)
+                if algo_col is not None:
+                    row_list[algo_col] = algo_lookup[key]
+                    populated_count += 1
+                out_ws.append([str(v) if v is not None else "" for v in row_list])
+                rows_written += 1
+        else:
+            # Standard filter mode
+            status = str(row[col_map["ALGORITHM_STATUS"]] or "").strip().upper()
+            trans_type = str(row[col_map["TRANSFORMATION_TYPE"]] or "").strip().upper()
 
-            variable = str(row_list[var_col] or "").strip()
-            if variable in algorithms and algo_col is not None:
-                row_list[algo_col] = algorithms[variable]
+            if status in FILTER_STATUS and trans_type in FILTER_TYPE:
+                row_list = list(row)
+                while len(row_list) < len(header_list):
+                    row_list.append(None)
 
-            out_ws.append([str(v) if v is not None else "" for v in row_list])
+                variable = str(row_list[var_col] or "").strip()
+                if variable in algo_lookup and algo_col is not None:
+                    row_list[algo_col] = algo_lookup[variable]
+                    populated_count += 1
+
+                out_ws.append([str(v) if v is not None else "" for v in row_list])
+                rows_written += 1
 
     # Auto-adjust column widths
     for col in out_ws.columns:
@@ -182,7 +225,8 @@ def write_output(spec_path, sas_name, output_path, algorithms_json):
 
     out_wb.save(output_path)
     print(f"Output written to: {output_path}")
-    print(f"Variables populated: {len(algorithms)}")
+    print(f"Rows written: {rows_written}")
+    print(f"Variables populated: {populated_count}")
 
 
 def main():
@@ -192,6 +236,8 @@ def main():
     parser.add_argument("--sas-name", required=True, help="SAS filename stem (e.g., KIAC_SE)")
     parser.add_argument("--output", help="Output xlsx path (write mode)")
     parser.add_argument("--algorithms", help="Path to JSON file with algorithms (write mode)")
+    parser.add_argument("--spec-driven", action="store_true",
+                        help="Use spec-driven matching (DATASET+TAGGED_FORM+VARIABLE) instead of status/type filters. For LBXL/ZDDM domains.")
 
     args = parser.parse_args()
 
@@ -205,7 +251,7 @@ def main():
         if not args.output or not args.algorithms:
             print("ERROR: --output and --algorithms required for write mode", file=sys.stderr)
             sys.exit(1)
-        write_output(args.spec, args.sas_name, args.output, args.algorithms)
+        write_output(args.spec, args.sas_name, args.output, args.algorithms, spec_driven=args.spec_driven)
 
 
 if __name__ == "__main__":
